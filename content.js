@@ -8,7 +8,13 @@ function parsePackage(pkg) {
   const heading = pkg.querySelector('.package-heading');
   const username = heading.querySelector('a')?.textContent || '';
   const total = heading.querySelector('strong')?.textContent || '';
-  const efficiency = heading.querySelector('.efficiency-index')?.textContent || '';
+  
+  // Extract just the percentage part from efficiency
+  const efficiencyElement = heading.querySelector('.efficiency-index');
+  const efficiencyText = efficiencyElement?.textContent || '';
+  // Extract just the percentage (e.g., from "85% of $527.30" to "85")
+  const percentageMatch = efficiencyText.match(/(\d+)%/);
+  const efficiencyPercentage = percentageMatch ? percentageMatch[1] : '';
   
   const cards = [...pkg.querySelectorAll('.package-body li')]
     .filter(li => !li.classList.contains('more'))
@@ -23,18 +29,25 @@ function parsePackage(pkg) {
   return {
     username,
     total,
-    efficiency,
+    efficiencyText,
+    efficiencyPercentage,
     cards
   };
 }
 
-// Create a unique key for each package that ignores price changes
-function getPackageKeyWithoutPrice(pkgObj) {
+// Create a unique identifier that only uses username and cards list
+// This will only change if the cards or the sender changes
+function getBasePackageKey(pkgObj) {
   const cardSignatures = pkgObj.cards
     .map(card => `${card.quantity}x ${card.name} ${card.condition}`)
     .join('|');
     
-  return `${pkgObj.username}-${pkgObj.efficiency}-${cardSignatures}`;
+  return `${pkgObj.username}-${cardSignatures}`;
+}
+
+// Create a key that includes percentage
+function getPackageKeyWithPercentage(pkgObj) {
+  return `${getBasePackageKey(pkgObj)}-${pkgObj.efficiencyPercentage}`;
 }
 
 // Create a full key including price
@@ -43,7 +56,7 @@ function getFullPackageKey(pkgObj) {
     .map(card => `${card.quantity}x ${card.name} ${card.condition} ${card.price}`)
     .join('|');
     
-  return `${pkgObj.username}-${pkgObj.total}-${pkgObj.efficiency}-${cardSignatures}`;
+  return `${pkgObj.username}-${pkgObj.total}-${pkgObj.efficiencyPercentage}-${cardSignatures}`;
 }
 
 async function initializeState() {
@@ -67,10 +80,22 @@ async function initializeState() {
   console.log('Loaded previous packages:', prevPackages.length);
 
   // Create lookup maps for faster comparison
-  const prevPackageMap = new Map();
+  const prevBasePackageMap = new Map();
+  const prevPackageWithPercentageMap = new Map();
+  
   prevPackages.forEach(pkg => {
-    prevPackageMap.set(getPackageKeyWithoutPrice(pkg), {
-      fullKey: getFullPackageKey(pkg),
+    const baseKey = getBasePackageKey(pkg);
+    const percentageKey = getPackageKeyWithPercentage(pkg);
+    const fullKey = getFullPackageKey(pkg);
+    
+    prevBasePackageMap.set(baseKey, {
+      percentageKey,
+      fullKey,
+      pkg
+    });
+    
+    prevPackageWithPercentageMap.set(percentageKey, {
+      fullKey,
       pkg
     });
   });
@@ -78,27 +103,29 @@ async function initializeState() {
   // Analyze each current package
   currentPackages.forEach((currPkg, index) => {
     const pkgElement = packages[index];
-    const keyWithoutPrice = getPackageKeyWithoutPrice(currPkg);
+    const baseKey = getBasePackageKey(currPkg);
+    const percentageKey = getPackageKeyWithPercentage(currPkg);
     const fullKey = getFullPackageKey(currPkg);
     
-    if (!prevPackageMap.has(keyWithoutPrice)) {
-      // This is a new package
+    // Check if the package (username + cards) exists
+    if (!prevBasePackageMap.has(baseKey)) {
+      // This is a truly new package
       pkgElement.classList.add('package-new');
       console.log('New package:', currPkg.username);
     } else {
-      const prevData = prevPackageMap.get(keyWithoutPrice);
+      // The package exists, check if percentage changed
+      const prevData = prevBasePackageMap.get(baseKey);
       
-      if (prevData.fullKey !== fullKey) {
-        // Something changed
-        if (currPkg.efficiency !== prevData.pkg.efficiency) {
-          // Percentage offer changed
-          pkgElement.classList.add('package-offer-changed');
-          console.log('Offer changed:', currPkg.username, 'from', prevData.pkg.efficiency, 'to', currPkg.efficiency);
-        } else {
-          // Only price changed (due to index price updates)
-          pkgElement.classList.add('package-price-changed');
-          console.log('Price changed:', currPkg.username);
-        }
+      if (prevData.percentageKey !== percentageKey) {
+        // Percentage offer changed
+        pkgElement.classList.add('package-offer-changed');
+        console.log('Offer changed:', currPkg.username, 
+                   'from', prevData.pkg.efficiencyPercentage + '%', 
+                   'to', currPkg.efficiencyPercentage + '%');
+      } else if (prevData.fullKey !== fullKey) {
+        // Only price changed (due to index price updates)
+        pkgElement.classList.add('package-price-changed');
+        console.log('Price changed:', currPkg.username);
       }
     }
   });
@@ -206,8 +233,51 @@ function addControls() {
   container.insertBefore(resetButton, container.firstChild);
 }
 
+// Add debug button function
+function addDebugButton() {
+  const debugButton = document.createElement('button');
+  debugButton.textContent = 'View Storage Data';
+  debugButton.className = 'btn btn-default';
+  debugButton.style.marginLeft = '10px';
+  
+  debugButton.onclick = () => {
+    // This works because it executes in the content script context
+    browser.storage.local.get().then(data => {
+      const overlay = document.createElement('div');
+      overlay.style.position = 'fixed';
+      overlay.style.top = '20px';
+      overlay.style.left = '20px';
+      overlay.style.right = '20px';
+      overlay.style.backgroundColor = 'white';
+      overlay.style.padding = '20px';
+      overlay.style.zIndex = '10000';
+      overlay.style.border = '1px solid black';
+      overlay.style.maxHeight = '80vh';
+      overlay.style.overflow = 'auto';
+      
+      const closeBtn = document.createElement('button');
+      closeBtn.textContent = 'Close';
+      closeBtn.onclick = () => document.body.removeChild(overlay);
+      
+      const pre = document.createElement('pre');
+      pre.textContent = JSON.stringify(data, null, 2);
+      
+      overlay.appendChild(closeBtn);
+      overlay.appendChild(pre);
+      document.body.appendChild(overlay);
+    });
+  };
+  
+  // Add it next to your reset button
+  const container = document.querySelector('.packages');
+  if (container) {
+    container.insertBefore(debugButton, container.firstChild);
+  }
+}
+
 // Add UI elements
 addControls();
+addDebugButton();
 
 // Try initialization every second until successful
 const initInterval = setInterval(() => {

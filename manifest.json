@@ -1,0 +1,16 @@
+{
+  "manifest_version": 2,
+  "name": "Cardsphere Package Tracker",
+  "version": "1.0",
+  "description": "Highlights changed packages on Cardsphere",
+  "permissions": [
+    "storage",
+    "*://*.cardsphere.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["*://*.cardsphere.com/send*"],
+      "js": ["content.js"]
+    }
+  ]
+}

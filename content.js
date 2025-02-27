@@ -22,7 +22,8 @@ function parsePackage(pkg) {
       name: li.querySelector('a')?.textContent || '',
       condition: li.querySelector('.condition')?.textContent || '',
       price: li.querySelector('strong')?.textContent || '',
-      quantity: li.textContent.match(/(\d+)x/)?.[1] || '1'
+      quantity: li.textContent.match(/(\d+)x/)?.[1] || '1',
+      element: li // Store reference to the DOM element
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
     
@@ -31,7 +32,8 @@ function parsePackage(pkg) {
     total,
     efficiencyText,
     efficiencyPercentage,
-    cards
+    cards,
+    element: pkg // Store reference to the DOM element
   };
 }
 
@@ -57,6 +59,31 @@ function getFullPackageKey(pkgObj) {
     .join('|');
     
   return `${pkgObj.username}-${pkgObj.total}-${pkgObj.efficiencyPercentage}-${cardSignatures}`;
+}
+
+// Function to display old price information
+function displayOldPriceInfo(cardElement, oldPrice, oldEfficiencyText) {
+  // Create old price display element
+  const oldPriceElement = document.createElement('div');
+  oldPriceElement.className = 'old-price-info';
+  oldPriceElement.innerHTML = `<span class="old-price">${oldPrice}</span> <span class="old-efficiency">${oldEfficiencyText}</span>`;
+  
+  // Insert after the current price
+  cardElement.appendChild(oldPriceElement);
+}
+
+// Function to display old package total
+function displayOldPackageTotal(packageElement, oldTotal, oldEfficiencyText) {
+  const heading = packageElement.querySelector('.package-heading');
+  if (!heading) return;
+  
+  // Create old total display element
+  const oldTotalElement = document.createElement('div');
+  oldTotalElement.className = 'old-package-total';
+  oldTotalElement.innerHTML = `<span class="old-total-label">Previous: </span><span class="old-total">${oldTotal}</span> <span class="old-efficiency">${oldEfficiencyText}</span>`;
+  
+  // Insert after the heading
+  heading.appendChild(oldTotalElement);
 }
 
 async function initializeState() {
@@ -122,16 +149,58 @@ async function initializeState() {
         console.log('Offer changed:', currPkg.username, 
                    'from', prevData.pkg.efficiencyPercentage + '%', 
                    'to', currPkg.efficiencyPercentage + '%');
+        
+        // Display old package total
+        displayOldPackageTotal(pkgElement, prevData.pkg.total, prevData.pkg.efficiencyText);
+        
       } else if (prevData.fullKey !== fullKey) {
         // Only price changed (due to index price updates)
         pkgElement.classList.add('package-price-changed');
         console.log('Price changed:', currPkg.username);
+        
+        // Display old package total
+        displayOldPackageTotal(pkgElement, prevData.pkg.total, prevData.pkg.efficiencyText);
+        
+        // Since only prices changed but not offers, we can match cards by name and condition
+        // to show old prices for individual cards
+        const prevCardMap = new Map();
+        prevData.pkg.cards.forEach(card => {
+          const cardKey = `${card.quantity}x ${card.name} ${card.condition}`;
+          prevCardMap.set(cardKey, card);
+        });
+        
+        // For each current card, find its previous price if available
+        currPkg.cards.forEach(card => {
+          const cardKey = `${card.quantity}x ${card.name} ${card.condition}`;
+          if (prevCardMap.has(cardKey)) {
+            const prevCard = prevCardMap.get(cardKey);
+            if (prevCard.price !== card.price) {
+              // Only add old price info if the price actually changed
+              displayOldPriceInfo(card.element, prevCard.price, '');
+            }
+          }
+        });
       }
     }
   });
 
-  // Save current state
-  await browser.storage.local.set({ packageData: currentPackages });
+  // Save current state with DOM references removed
+  const packagesToStore = currentPackages.map(pkg => {
+    // Create a copy without DOM references
+    const pkgCopy = { ...pkg };
+    delete pkgCopy.element;
+    
+    // Remove DOM references from cards too
+    pkgCopy.cards = pkg.cards.map(card => {
+      const cardCopy = { ...card };
+      delete cardCopy.element;
+      return cardCopy;
+    });
+    
+    return pkgCopy;
+  });
+  
+  await browser.storage.local.set({ packageData: packagesToStore });
   isInitialized = true;
   console.log('State initialized');
 }
@@ -157,9 +226,13 @@ style.textContent = `
     border-radius: 0 !important;
   }
 
-  .package-tracker-reset {
+  .package-tracker-buttons {
     margin: 10px 0 !important;
-    display: block !important;
+    display: flex !important;
+  }
+  
+  .package-tracker-reset {
+    margin: 0 !important;
   }
   
   .package-tracker-legend {
@@ -197,6 +270,25 @@ style.textContent = `
     background-color: rgba(255, 255, 0, 0.7);
     border: 1px solid #ff9800;
   }
+  
+  /* Old price styling */
+  .old-price-info, .old-package-total {
+    font-size: 12px;
+    color: #999;
+    text-decoration: line-through;
+    margin-top: 2px;
+    font-style: italic;
+  }
+  
+  .old-package-total {
+    margin-top: 5px;
+    display: block;
+  }
+  
+  .old-total-label {
+    text-decoration: none;
+    font-weight: bold;
+  }
 `;
 document.head.appendChild(style);
 
@@ -205,14 +297,9 @@ function addControls() {
   const container = document.querySelector('.packages');
   if (!container) return;
 
-  // Create legend
-  const legend = document.createElement('div');
-  legend.className = 'package-tracker-legend';
-  legend.innerHTML = `
-    <div class="legend-item"><span class="legend-color color-new"></span> New Listings</div>
-    <div class="legend-item"><span class="legend-color color-offer"></span> Cards/Offer % Changed</div>
-    <div class="legend-item"><span class="legend-color color-price"></span> Price Only Changed</div>
-  `;
+  // Create a button container div to hold both buttons
+  const buttonContainer = document.createElement('div');
+  buttonContainer.className = 'package-tracker-buttons';
   
   // Create reset button
   const resetButton = document.createElement('button');
@@ -227,14 +314,8 @@ function addControls() {
     console.log("Storage cleared");
     location.reload();
   };
-
-  // Add elements to container
-  container.insertBefore(legend, container.firstChild);
-  container.insertBefore(resetButton, container.firstChild);
-}
-
-// Add debug button function
-function addDebugButton() {
+  
+  // Create debug button
   const debugButton = document.createElement('button');
   debugButton.textContent = 'View Storage Data';
   debugButton.className = 'btn btn-default';
@@ -267,17 +348,29 @@ function addDebugButton() {
       document.body.appendChild(overlay);
     });
   };
+
+  // Create legend
+  const legend = document.createElement('div');
+  legend.className = 'package-tracker-legend';
+  legend.innerHTML = `
+    <div class="legend-item"><span class="legend-color color-new"></span> New Listings</div>
+    <div class="legend-item"><span class="legend-color color-offer"></span> Cards/Offer % Changed</div>
+    <div class="legend-item"><span class="legend-color color-price"></span> Price Only Changed</div>
+  `;
   
-  // Add it next to your reset button
-  const container = document.querySelector('.packages');
-  if (container) {
-    container.insertBefore(debugButton, container.firstChild);
-  }
+  // Add buttons to button container
+  buttonContainer.appendChild(resetButton);
+  buttonContainer.appendChild(debugButton);
+
+  // Add elements to container
+  container.insertBefore(legend, container.firstChild);
+  container.insertBefore(buttonContainer, container.firstChild);
 }
+
+// We don't need a separate addDebugButton function anymore since it's integrated into addControls
 
 // Add UI elements
 addControls();
-addDebugButton();
 
 // Try initialization every second until successful
 const initInterval = setInterval(() => {

@@ -2,6 +2,10 @@
 console.log('Content script loaded');
 
 let isInitialized = false;
+let newCount = 0;
+let offerChangedCount = 0;
+let priceChangedCount = 0;
+let legendElement = null;
 
 // Parse a package into a structured object
 function parsePackage(pkg) {
@@ -66,7 +70,21 @@ function displayOldPriceInfo(cardElement, oldPrice, oldEfficiencyText) {
   // Create old price display element
   const oldPriceElement = document.createElement('div');
   oldPriceElement.className = 'old-price-info';
-  oldPriceElement.innerHTML = `<span class="old-price">${oldPrice}</span> <span class="old-efficiency">${oldEfficiencyText}</span>`;
+  
+  // Create price span
+  const priceSpan = document.createElement('span');
+  priceSpan.className = 'old-price';
+  priceSpan.textContent = oldPrice;
+  oldPriceElement.appendChild(priceSpan);
+  
+  // Add space
+  oldPriceElement.appendChild(document.createTextNode(' '));
+  
+  // Create efficiency span
+  const efficiencySpan = document.createElement('span');
+  efficiencySpan.className = 'old-efficiency';
+  efficiencySpan.textContent = oldEfficiencyText;
+  oldPriceElement.appendChild(efficiencySpan);
   
   // Insert after the current price
   cardElement.appendChild(oldPriceElement);
@@ -80,7 +98,27 @@ function displayOldPackageTotal(packageElement, oldTotal, oldEfficiencyText) {
   // Create old total display element
   const oldTotalElement = document.createElement('div');
   oldTotalElement.className = 'old-package-total';
-  oldTotalElement.innerHTML = `<span class="old-total-label">Previous: </span><span class="old-total">${oldTotal}</span> <span class="old-efficiency">${oldEfficiencyText}</span>`;
+  
+  // Create label span
+  const labelSpan = document.createElement('span');
+  labelSpan.className = 'old-total-label';
+  labelSpan.textContent = 'Previous: ';
+  oldTotalElement.appendChild(labelSpan);
+  
+  // Create total span
+  const totalSpan = document.createElement('span');
+  totalSpan.className = 'old-total';
+  totalSpan.textContent = oldTotal;
+  oldTotalElement.appendChild(totalSpan);
+  
+  // Add space
+  oldTotalElement.appendChild(document.createTextNode(' '));
+  
+  // Create efficiency span
+  const efficiencySpan = document.createElement('span');
+  efficiencySpan.className = 'old-efficiency';
+  efficiencySpan.textContent = oldEfficiencyText;
+  oldTotalElement.appendChild(efficiencySpan);
   
   // Insert after the heading
   heading.appendChild(oldTotalElement);
@@ -97,6 +135,11 @@ async function initializeState() {
     console.log('No packages found, waiting...');
     return;
   }
+
+  // Reset counters
+  newCount = 0;
+  offerChangedCount = 0;
+  priceChangedCount = 0;
 
   // Parse all current packages
   const currentPackages = packages.map(pkg => parsePackage(pkg));
@@ -138,6 +181,7 @@ async function initializeState() {
     if (!prevBasePackageMap.has(baseKey)) {
       // This is a truly new package
       pkgElement.classList.add('package-new');
+      newCount++;
       console.log('New package:', currPkg.username);
     } else {
       // The package exists, check if percentage changed
@@ -146,16 +190,17 @@ async function initializeState() {
       if (prevData.percentageKey !== percentageKey) {
         // Percentage offer changed
         pkgElement.classList.add('package-offer-changed');
+        offerChangedCount++;
         console.log('Offer changed:', currPkg.username, 
                    'from', prevData.pkg.efficiencyPercentage + '%', 
                    'to', currPkg.efficiencyPercentage + '%');
-        
+                   
         // Display old package total
         displayOldPackageTotal(pkgElement, prevData.pkg.total, prevData.pkg.efficiencyText);
-        
       } else if (prevData.fullKey !== fullKey) {
         // Only price changed (due to index price updates)
         pkgElement.classList.add('package-price-changed');
+        priceChangedCount++;
         console.log('Price changed:', currPkg.username);
         
         // Display old package total
@@ -183,6 +228,9 @@ async function initializeState() {
       }
     }
   });
+
+  // Update the legend with the current counts
+  updateLegendCounts();
 
   // Save current state with DOM references removed
   const packagesToStore = currentPackages.map(pkg => {
@@ -213,7 +261,7 @@ style.textContent = `
     border-left: 4px solid #4CAF50 !important;
     border-radius: 0 !important;
   }
-  
+
   .packages .cs-package.package-offer-changed {
     background-color: rgba(173, 216, 230, 0.15) !important;
     border-left: 4px solid #2196F3 !important;
@@ -230,11 +278,11 @@ style.textContent = `
     margin: 10px 0 !important;
     display: flex !important;
   }
-  
+
   .package-tracker-reset {
     margin: 0 !important;
   }
-  
+
   .package-tracker-legend {
     margin: 10px 0;
     padding: 10px;
@@ -242,12 +290,12 @@ style.textContent = `
     border-radius: 4px;
     font-size: 12px;
   }
-  
+
   .legend-item {
     display: inline-block;
     margin-right: 15px;
   }
-  
+
   .legend-color {
     display: inline-block;
     width: 15px;
@@ -255,22 +303,22 @@ style.textContent = `
     margin-right: 5px;
     vertical-align: middle;
   }
-  
+
   .color-new {
     background-color: rgba(144, 238, 144, 0.7);
     border: 1px solid #4CAF50;
   }
-  
+
   .color-offer {
     background-color: rgba(173, 216, 230, 0.7);
     border: 1px solid #2196F3;
   }
-  
+
   .color-price {
     background-color: rgba(255, 255, 0, 0.7);
     border: 1px solid #ff9800;
   }
-  
+
   /* Old price styling */
   .old-price-info, .old-package-total {
     font-size: 12px;
@@ -279,18 +327,87 @@ style.textContent = `
     margin-top: 2px;
     font-style: italic;
   }
-  
+
   .old-package-total {
     margin-top: 5px;
     display: block;
   }
-  
+
   .old-total-label {
     text-decoration: none;
     font-weight: bold;
   }
 `;
 document.head.appendChild(style);
+
+// Modify the createLegend function to store the legend element reference
+function createLegend() {
+  const legend = document.createElement('div');
+  legend.className = 'package-tracker-legend';
+  legendElement = legend; // Store reference globally
+  
+  // New listings
+  const newItem = document.createElement('div');
+  newItem.className = 'legend-item';
+  
+  const newColor = document.createElement('span');
+  newColor.className = 'legend-color color-new';
+  newItem.appendChild(newColor);
+  
+  const newCountSpan = document.createElement('span');
+  newCountSpan.textContent = ` New Cards/Listings (0)`;  // Start with 0
+  newItem.appendChild(newCountSpan);
+  legend.appendChild(newItem);
+  
+  // Offer % Changed
+  const offerItem = document.createElement('div');
+  offerItem.className = 'legend-item';
+  
+  const offerColor = document.createElement('span');
+  offerColor.className = 'legend-color color-offer';
+  offerItem.appendChild(offerColor);
+  
+  const offerCountSpan = document.createElement('span');
+  offerCountSpan.textContent = ` Offer % Changed (0)`;  // Start with 0
+  offerItem.appendChild(offerCountSpan);
+  legend.appendChild(offerItem);
+  
+  // Price Only Changed
+  const priceItem = document.createElement('div');
+  priceItem.className = 'legend-item';
+  
+  const priceColor = document.createElement('span');
+  priceColor.className = 'legend-color color-price';
+  priceItem.appendChild(priceColor);
+  
+  const priceCountSpan = document.createElement('span');
+  priceCountSpan.textContent = ` Index Price Changed (0)`;  // Start with 0
+  priceItem.appendChild(priceCountSpan);
+  legend.appendChild(priceItem);
+  
+  return legend;
+}
+
+// Completely replace the updateLegendCounts function
+function updateLegendCounts() {
+  if (!legendElement) return;
+  
+  // Get the span elements directly from the legend element structure
+  const legendItems = legendElement.querySelectorAll('.legend-item');
+  if (legendItems.length >= 3) {
+    // Update new count
+    const newSpan = legendItems[0].querySelector('span:not(.legend-color)');
+    if (newSpan) newSpan.textContent = ` New Cards/Listings (${newCount})`;
+    
+    // Update offer count
+    const offerSpan = legendItems[1].querySelector('span:not(.legend-color)');
+    if (offerSpan) offerSpan.textContent = ` Offer % Changed (${offerChangedCount})`;
+    
+    // Update price count
+    const priceSpan = legendItems[2].querySelector('span:not(.legend-color)');
+    if (priceSpan) priceSpan.textContent = ` Index Price Changed (${priceChangedCount})`;
+  }
+}
 
 // Add reset button and legend
 function addControls() {
@@ -310,6 +427,9 @@ function addControls() {
     event.preventDefault();
     console.log("Reset button clicked");
     isInitialized = false;
+    newCount = 0;
+    offerChangedCount = 0;
+    priceChangedCount = 0;
     await browser.storage.local.clear();
     console.log("Storage cleared");
     location.reload();
@@ -349,14 +469,8 @@ function addControls() {
     });
   };
 
-  // Create legend
-  const legend = document.createElement('div');
-  legend.className = 'package-tracker-legend';
-  legend.innerHTML = `
-    <div class="legend-item"><span class="legend-color color-new"></span> New Listings</div>
-    <div class="legend-item"><span class="legend-color color-offer"></span> Cards/Offer % Changed</div>
-    <div class="legend-item"><span class="legend-color color-price"></span> Price Only Changed</div>
-  `;
+  // Create legend using DOM methods and initial counts
+  const legend = createLegend(newCount, offerChangedCount, priceChangedCount);
   
   // Add buttons to button container
   buttonContainer.appendChild(resetButton);
@@ -372,23 +486,40 @@ function addControls() {
 // Add UI elements
 addControls();
 
-// Try initialization every second until successful
-const initInterval = setInterval(() => {
-  if (!isInitialized) {
-    initializeState();
-  } else {
-    clearInterval(initInterval);
-  }
-}, 1000);
+// Track if we're in the process of initializing to prevent double init
+let isInitializing = false;
 
-// Watch for DOM changes
+// Function to safely begin initialization
+async function beginInitialization() {
+  if (isInitialized || isInitializing) {
+    console.log('Already initialized or initializing, skipping');
+    return;
+  }
+  
+  isInitializing = true;
+  await initializeState();
+  isInitializing = false;
+}
+
+// Start the initialization once
+beginInitialization();
+
+// Set up a mutation observer to catch dynamically loaded content,
+// but make sure we only initialize once
 const observer = new MutationObserver((mutations) => {
-  if (!isInitialized) {
-    initializeState();
+  if (!isInitialized && !isInitializing) {
+    console.log('DOM changes detected, starting initialization');
+    beginInitialization();
   }
 });
 
-observer.observe(document.querySelector('.packages'), {
-  childList: true,
-  subtree: true
-});
+// Only observe if not already initialized
+if (!isInitialized) {
+  const packagesContainer = document.querySelector('.packages');
+  if (packagesContainer) {
+    observer.observe(packagesContainer, {
+      childList: true,
+      subtree: true
+    });
+  }
+}
